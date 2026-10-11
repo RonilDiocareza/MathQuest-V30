@@ -6,7 +6,6 @@ import 'package:flutter/services.dart';
 import 'package:flame/game.dart';
 import 'package:just_audio/just_audio.dart';
 import '../services/user_progress_service.dart';
-import '../services/leaderboard_service.dart';
 import '../game/math_world_game.dart';
 import '../game/npc_question.dart';
 import '../game/npc_question_dialog.dart';
@@ -47,6 +46,8 @@ class _NumberPickupGameScreenState extends State<NumberPickupGameScreen> {
   bool _isGameOverDialogOpen = false;
   bool _isLeaving = false;
   bool _isFinalizingLevel = false;
+  bool _completionPending = false;
+  bool _correctNumberCollected = false;
   late Future<void> _orientationChange;
   late Future<void> _musicInitialization;
 
@@ -68,15 +69,20 @@ class _NumberPickupGameScreenState extends State<NumberPickupGameScreen> {
       final progress = await UserProgressService.getCurrentUserProgress();
       if (!mounted) return;
       if (progress.completedLevels.contains(currentLevel)) {
-        final finalScore =
-            await UserProgressService.getGameModeFinalScore(currentLevel);
+        final finalScore = progress.gameModeFinalScores[currentLevel] ??
+            await UserProgressService.getGameModeFinalScore(currentLevel) ??
+            0;
         if (!mounted) return;
         setState(() {
-          score = finalScore ?? 0;
+          score = finalScore;
           levelCompleted = true;
         });
         return;
       }
+      setState(() {
+        score =
+            progress.completedNpcQuestionsForLevel(currentLevel).length * 10;
+      });
       gameInstance.resumeWorld();
     } catch (error, stackTrace) {
       debugPrint('Unable to restore completed Game Mode score: $error');
@@ -208,7 +214,7 @@ class _NumberPickupGameScreenState extends State<NumberPickupGameScreen> {
   }
 
   Future<void> _onNpcQuestion(NpcQuestion question) async {
-    if (!mounted || levelCompleted || _isLeaving) return;
+    if (!mounted || levelCompleted || _completionPending || _isLeaving) return;
     final activeGame = gameInstance;
     bool? isCorrect;
     try {
@@ -257,10 +263,9 @@ class _NumberPickupGameScreenState extends State<NumberPickupGameScreen> {
       unawaited(_playSoundEffect('Correct Answer.mp3'));
       setState(() {
         score += 10;
-        if (isFinalQuestion) levelCompleted = true;
       });
-      unawaited(_saveLeaderboardPoints(10));
       if (isFinalQuestion) {
+        _completionPending = true;
         final victorySound = _playSoundEffect('Victory.mp3');
         activeGame.pauseWorld();
         final navigator = Navigator.of(context);
@@ -321,35 +326,17 @@ class _NumberPickupGameScreenState extends State<NumberPickupGameScreen> {
     );
   }
 
-  Future<void> _saveLevelProgress(int level) async {
-    await UserProgressService.saveLevelCompletion(level);
-  }
-
-  Future<void> _saveLeaderboardPoints(int points) async {
-    try {
-      await LeaderboardService.addPoints(points);
-    } catch (error, stackTrace) {
-      debugPrint('Unable to save leaderboard points: $error');
-      debugPrintStack(stackTrace: stackTrace);
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Could not save your leaderboard score.'),
-        ),
-      );
-    }
-  }
-
   Future<void> _onCorrectNumberCollected() async {
-    if (!mounted || levelCompleted) return;
+    if (!mounted || levelCompleted || _completionPending) return;
 
     final correctSound = _playSoundEffect('Correct Answer.mp3');
     final victorySound = _playSoundEffect('Victory.mp3');
-    setState(() {
-      levelCompleted = true;
-      score += 10;
-    });
-    unawaited(_saveLeaderboardPoints(10));
+    _completionPending = true;
+    if (!_correctNumberCollected) {
+      _correctNumberCollected = true;
+      setState(() => score += 10);
+    }
+    gameInstance.pauseWorld();
 
     // Show correct answer indicator
     showDialog(
@@ -408,16 +395,23 @@ class _NumberPickupGameScreenState extends State<NumberPickupGameScreen> {
     if (_isFinalizingLevel || _isLeaving) return;
     _isFinalizingLevel = true;
     try {
-      await _saveLevelProgress(currentLevel);
-      await UserProgressService.saveGameModeFinalScore(currentLevel, score);
+      await UserProgressService.completeGameMode(currentLevel, score);
     } catch (error, stackTrace) {
       _isFinalizingLevel = false;
       debugPrint('Unable to persist completed Game Mode score: $error');
       debugPrintStack(stackTrace: stackTrace);
       if (mounted) {
+        setState(() => levelCompleted = false);
+        gameInstance.pauseWorld();
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Could not save the final score. Please try again.'),
+          SnackBar(
+            content: const Text(
+              'Could not save the final score. Please try again.',
+            ),
+            action: SnackBarAction(
+              label: 'Retry',
+              onPressed: () => unawaited(_advanceToNextLevel(navigator)),
+            ),
           ),
         );
       }
@@ -425,8 +419,11 @@ class _NumberPickupGameScreenState extends State<NumberPickupGameScreen> {
     }
     if (!mounted) return;
 
+    setState(() {
+      levelCompleted = true;
+      _completionPending = false;
+    });
     _isLeaving = true;
-    setState(() {});
     await WidgetsBinding.instance.endOfFrame;
     if (mounted && navigator.canPop()) {
       navigator.pop(true);
@@ -543,6 +540,8 @@ class _NumberPickupGameScreenState extends State<NumberPickupGameScreen> {
       gameInstance = _createGame();
       _isResettingLevel = false;
     });
+    _completionPending = false;
+    _correctNumberCollected = false;
   }
 
   void _onMusicPressed() {

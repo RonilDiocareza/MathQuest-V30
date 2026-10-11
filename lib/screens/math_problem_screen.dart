@@ -50,8 +50,7 @@ class _MathProblemScreenState extends State<MathProblemScreen> {
       if (!mounted) return;
       final savedAnswer = progress.levelQuestionAnswers[currentLevel];
       setState(() {
-        _isGameModeUnlocked = savedAnswer != null ||
-            progress.completedLevels.contains(currentLevel);
+        _isGameModeUnlocked = savedAnswer != null;
         if (savedAnswer != null) {
           firstOperand = savedAnswer.firstOperand;
           secondOperand = savedAnswer.secondOperand;
@@ -255,7 +254,7 @@ class _MathProblemScreenState extends State<MathProblemScreen> {
   Future<void> _launchGameMode() async {
     if (_isGameModeLaunching) return;
     _isGameModeLaunching = true;
-    final result = await Navigator.push<bool>(
+    await Navigator.push<bool>(
       context,
       MaterialPageRoute(
         builder: (context) => NumberPickupGameScreen(
@@ -267,25 +266,6 @@ class _MathProblemScreenState extends State<MathProblemScreen> {
     );
     if (!mounted) return;
     _isGameModeLaunching = false;
-    if (result == true) _advanceToNextQuestion();
-  }
-
-  void _advanceToNextQuestion() {
-    if (currentLevel >= 60) {
-      Navigator.pop(context, true);
-      return;
-    }
-
-    setState(() {
-      currentLevel += 1;
-      _isGameModeUnlocked = false;
-      answerController.clear();
-      feedback = '';
-      isCorrect = false;
-      isWaitingNextQuestion = false;
-      _isSubmitting = false;
-      generateProblem();
-    });
   }
 
   //  BACK BUTTON FUNCTION

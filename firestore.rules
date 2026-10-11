@@ -136,6 +136,10 @@ service cloud.firestore {
               && request.resource.data.diff(resource.data).affectedKeys()
                 .hasOnly(['tutorialCompleted'])
               && request.resource.data.tutorialCompleted == true)
+        || validLevelQuestionAnswerProgressUpdate(userId)
+        || validGameModeCompletionProgressUpdate(userId)
+        || validNpcQuestionProgressUpdate(userId)
+        || validNpcQuestionResetProgressUpdate(userId)
         || (request.resource.data.lrn == resource.data.lrn
           && (isAdmin()
         || (isApprovedStudent(userId)
@@ -206,7 +210,11 @@ service cloud.firestore {
   'unlockedLevels',
   'questAttempts',
   'maxUnlockedSubLevel',
-  'levelQuestionAnswers'
+  'levelQuestionAnswers',
+  'latestLevelQuestionAnswerLevel',
+  'gameModeFinalScores',
+  'latestCompletedGameModeLevel',
+  'latestCompletedNpcQuestionLevel'
 ])
 
           && (!userData.progress.keys().hasAny(['completedLevels'])
@@ -241,7 +249,25 @@ service cloud.firestore {
               && validSublevel(userData.progress.maxUnlockedSubLevel)))
           && (!userData.progress.keys().hasAny(['levelQuestionAnswers'])
             || validLevelQuestionAnswers(
-              userData.progress.levelQuestionAnswers)));
+              userData.progress.levelQuestionAnswers))
+          && (!userData.progress.keys()
+                .hasAny(['latestLevelQuestionAnswerLevel'])
+            || (userData.progress.latestLevelQuestionAnswerLevel is string
+              && userData.progress.latestLevelQuestionAnswerLevel.matches(
+                '^([1-9]|[1-5][0-9]|60)$')))
+          && (!userData.progress.keys().hasAny(['gameModeFinalScores'])
+            || (userData.progress.gameModeFinalScores is map
+              && userData.progress.gameModeFinalScores.size() <= 60))
+          && (!userData.progress.keys()
+                .hasAny(['latestCompletedGameModeLevel'])
+            || (userData.progress.latestCompletedGameModeLevel is string
+              && userData.progress.latestCompletedGameModeLevel.matches(
+                '^([1-9]|[1-5][0-9]|60)$')))
+          && (!userData.progress.keys()
+                .hasAny(['latestCompletedNpcQuestionLevel'])
+            || (userData.progress.latestCompletedNpcQuestionLevel is string
+              && userData.progress.latestCompletedNpcQuestionLevel.matches(
+                '^([1-9]|[1-5][0-9]|60)$'))));
     }
 
     function validLevelQuestionAnswer(answer) {
@@ -349,6 +375,236 @@ service cloud.firestore {
         && (!answers.keys().hasAny(['60']) || validLevelQuestionAnswer(answers['60']));
     }
 
+    function validLevelQuestionAnswerUpdate(oldProgress, newProgress) {
+      let oldAnswers = oldProgress.get('levelQuestionAnswers', {});
+      let newAnswers = newProgress.get('levelQuestionAnswers', {});
+      let oldLatestLevel =
+        oldProgress.get('latestLevelQuestionAnswerLevel', null);
+      let newLatestLevel =
+        newProgress.get('latestLevelQuestionAnswerLevel', null);
+      let answerDiff = newAnswers.diff(oldAnswers);
+      let addedKeys = answerDiff.addedKeys();
+      return oldAnswers is map
+        && newAnswers is map
+        && answerDiff.changedKeys().size() == 0
+        && answerDiff.removedKeys().size() == 0
+        && addedKeys.size() == 1
+        && newLatestLevel is string
+        && newLatestLevel.matches('^([1-9]|[1-5][0-9]|60)$')
+        && newLatestLevel != oldLatestLevel
+        && addedKeys.hasOnly([newLatestLevel])
+        && validLevelQuestionAnswer(
+          newAnswers.get(newLatestLevel, null));
+    }
+
+    function validLevelQuestionAnswerProgressUpdate(userId) {
+      let oldProgress = resource.data.get('progress', {});
+      let newProgress = request.resource.data.get('progress', {});
+      return isApprovedStudent(userId)
+        && request.resource.data.lrn == resource.data.lrn
+        && request.resource.data.role == resource.data.role
+        && request.resource.data.status == resource.data.status
+        && request.resource.data.diff(resource.data).affectedKeys()
+          .hasOnly(['progress'])
+        && oldProgress is map
+        && newProgress is map
+        && newProgress.diff(oldProgress).affectedKeys().hasOnly([
+          'levelQuestionAnswers',
+          'latestLevelQuestionAnswerLevel'
+        ])
+        && validLevelQuestionAnswerUpdate(oldProgress, newProgress);
+    }
+
+    function validGameModeScoreAddition(oldProgress, newProgress) {
+      let oldScores = oldProgress.get('gameModeFinalScores', {});
+      let newScores = newProgress.get('gameModeFinalScores', {});
+      let scoreDiff = newScores.diff(oldScores);
+      let addedScoreKeys = scoreDiff.addedKeys();
+      let levelKey =
+        newProgress.get('latestCompletedGameModeLevel', null);
+      return oldScores is map
+        && newScores is map
+        && newScores.size() <= 60
+        && scoreDiff.changedKeys().size() == 0
+        && scoreDiff.removedKeys().size() == 0
+        && addedScoreKeys.size() == 1
+        && levelKey is string
+        && levelKey.matches('^([1-9]|[1-5][0-9]|60)$')
+        && levelKey != oldProgress.get('latestCompletedGameModeLevel', null)
+        && addedScoreKeys.hasOnly([levelKey])
+        && newScores.get(levelKey, null) is int
+        && newScores.get(levelKey, null) >= 0
+        && newScores.get(levelKey, null) <= 70;
+    }
+
+    function validGameModeLevelProgress(oldProgress, newProgress) {
+      let oldLevels = oldProgress.get('completedLevels', []);
+      let newLevels = newProgress.get('completedLevels', []);
+      let levelKey =
+        newProgress.get('latestCompletedGameModeLevel', null);
+      return oldLevels is list
+        && newLevels is list
+        && newLevels.hasAll(oldLevels)
+        && newLevels.hasOnly([
+          1, 2, 3, 4, 5, 6, 7, 8, 9, 10,
+          11, 12, 13, 14, 15, 16, 17, 18, 19, 20,
+          21, 22, 23, 24, 25, 26, 27, 28, 29, 30,
+          31, 32, 33, 34, 35, 36, 37, 38, 39, 40,
+          41, 42, 43, 44, 45, 46, 47, 48, 49, 50,
+          51, 52, 53, 54, 55, 56, 57, 58, 59, 60
+        ])
+        && newLevels.toSet().size() == newLevels.size()
+        && newLevels.size() <= oldLevels.size() + 1
+        && (newLevels.size() == oldLevels.size()
+          ? oldLevels.hasAny([int(levelKey)])
+          : !oldLevels.hasAny([int(levelKey)])
+            && newLevels.hasAny([int(levelKey)]));
+    }
+
+    function validGameModeUnlockProgress(oldProgress, newProgress) {
+      let oldSublevels = oldProgress.get(
+        'maxUnlockedSubLevel',
+        {'1': 1, '2': 1, '3': 1}
+      );
+      let newSublevels = newProgress.get(
+        'maxUnlockedSubLevel',
+        {'1': 1, '2': 1, '3': 1}
+      );
+      let oldUnlocked = oldProgress.get('unlockedLevels', 1);
+      let newUnlocked = newProgress.get('unlockedLevels', 1);
+      return oldUnlocked is int
+        && newUnlocked is int
+        && oldUnlocked >= 1
+        && newUnlocked >= oldUnlocked
+        && newUnlocked <= 3
+        && oldSublevels is map
+        && newSublevels is map
+        && oldSublevels.keys().hasOnly(['1', '2', '3'])
+        && newSublevels.keys().hasOnly(['1', '2', '3'])
+        && validSublevel(oldSublevels)
+        && validSublevel(newSublevels)
+        && newSublevels.get('1', 1) >= oldSublevels.get('1', 1)
+        && newSublevels.get('2', 1) >= oldSublevels.get('2', 1)
+        && newSublevels.get('3', 1) >= oldSublevels.get('3', 1);
+    }
+
+    function validGameModeCompletionProgressUpdate(userId) {
+      let oldProgress = resource.data.get('progress', {});
+      let newProgress = request.resource.data.get('progress', {});
+      return isApprovedStudent(userId)
+        && request.resource.data.lrn == resource.data.lrn
+        && request.resource.data.role == resource.data.role
+        && request.resource.data.status == resource.data.status
+        && request.resource.data.diff(resource.data).affectedKeys()
+        .hasOnly(['progress'])
+        && oldProgress is map
+        && newProgress is map
+        && newProgress.diff(oldProgress).affectedKeys().hasOnly([
+        'completedLevels',
+        'unlockedLevels',
+        'maxUnlockedSubLevel',
+        'gameModeFinalScores',
+        'latestCompletedGameModeLevel'
+        ])
+        && validGameModeScoreAddition(oldProgress, newProgress)
+        && validGameModeLevelProgress(oldProgress, newProgress)
+        && validGameModeUnlockProgress(oldProgress, newProgress);
+    }
+
+    function validNpcQuestionProgressUpdate(userId) {
+      let oldProgress = resource.data.get('progress', {});
+      let newProgress = request.resource.data.get('progress', {});
+      let oldByLevel =
+        oldProgress.get('completedNpcQuestionsByLevel', {});
+      let newByLevel =
+        newProgress.get('completedNpcQuestionsByLevel', {});
+      let npcDiff = newByLevel.diff(oldByLevel);
+      let oldLegacy = oldProgress.get('completedNpcQuestions', []);
+      let newLegacy = newProgress.get('completedNpcQuestions', []);
+      let levelKey =
+        newProgress.get('latestCompletedNpcQuestionLevel', null);
+      let oldQuestions = oldByLevel.get(levelKey, []);
+      let newQuestions = newByLevel.get(levelKey, null);
+      return isApprovedStudent(userId)
+        && request.resource.data.lrn == resource.data.lrn
+        && request.resource.data.role == resource.data.role
+        && request.resource.data.status == resource.data.status
+        && request.resource.data.diff(resource.data).affectedKeys()
+          .hasOnly(['progress'])
+        && oldProgress is map
+        && newProgress is map
+        && newProgress.diff(oldProgress).affectedKeys().hasOnly([
+          'completedNpcQuestions',
+          'completedNpcQuestionsByLevel',
+          'latestCompletedNpcQuestionLevel'
+        ])
+        && oldByLevel is map
+        && newByLevel is map
+        && newByLevel.size() <= 60
+        && npcDiff.removedKeys().size() == 0
+        && npcDiff.changedKeys().size() + npcDiff.addedKeys().size() == 1
+        && levelKey is string
+        && levelKey.matches('^([1-9]|[1-5][0-9]|60)$')
+        && (npcDiff.changedKeys().hasOnly([levelKey])
+          || npcDiff.addedKeys().hasOnly([levelKey]))
+        && oldLegacy is list
+        && newLegacy is list
+        && validNpcQuestionList(oldLegacy)
+        && validNpcQuestionList(newLegacy)
+        && oldQuestions is list
+        && newQuestions is list
+        && validNpcQuestionList(oldQuestions)
+        && validNpcQuestionList(newQuestions)
+        && newQuestions.hasAll(oldQuestions)
+        && newQuestions.size() == oldQuestions.size() + 1
+        && newQuestions.hasAny([oldQuestions.size() + 1])
+        && (levelKey == '1'
+          ? newLegacy == newQuestions
+          : newLegacy == oldLegacy);
+    }
+
+    function validNpcQuestionResetProgressUpdate(userId) {
+      let oldProgress = resource.data.get('progress', {});
+      let newProgress = request.resource.data.get('progress', {});
+      let oldByLevel =
+        oldProgress.get('completedNpcQuestionsByLevel', {});
+      let newByLevel =
+        newProgress.get('completedNpcQuestionsByLevel', {});
+      let npcDiff = newByLevel.diff(oldByLevel);
+      let oldLegacy = oldProgress.get('completedNpcQuestions', []);
+      let newLegacy = newProgress.get('completedNpcQuestions', []);
+      return isApprovedStudent(userId)
+        && request.resource.data.lrn == resource.data.lrn
+        && request.resource.data.role == resource.data.role
+        && request.resource.data.status == resource.data.status
+        && request.resource.data.diff(resource.data).affectedKeys()
+          .hasOnly(['progress'])
+        && oldProgress is map
+        && newProgress is map
+        && newProgress.diff(oldProgress).affectedKeys().hasOnly([
+          'completedNpcQuestions',
+          'completedNpcQuestionsByLevel'
+        ])
+        && oldByLevel is map
+        && newByLevel is map
+        && npcDiff.addedKeys().size() == 0
+        && npcDiff.changedKeys().size() == 0
+        && oldLegacy is list
+        && newLegacy is list
+        && validNpcQuestionList(oldLegacy)
+        && validNpcQuestionList(newLegacy)
+        && newProgress.get('latestCompletedNpcQuestionLevel', null)
+          == oldProgress.get('latestCompletedNpcQuestionLevel', null)
+        && (npcDiff.removedKeys().size() == 1
+          ? (npcDiff.removedKeys().hasAny(['1'])
+              ? newLegacy.size() == 0
+              : newLegacy == oldLegacy)
+          : npcDiff.removedKeys().size() == 0
+            && oldByLevel.get('1', null) == null
+            && oldLegacy.size() > 0
+            && newLegacy.size() == 0);
+    }
+
     function validNpcQuestionList(questions) {
       return questions is list
         && questions.size() <= 6
@@ -372,8 +628,30 @@ service cloud.firestore {
       let newLevels = newProgress.get('completedLevels', []);
       let oldQuestionAnswers = oldProgress.get('levelQuestionAnswers', {});
       let newQuestionAnswers = newProgress.get('levelQuestionAnswers', {});
+      let oldGameModeScores = oldProgress.get('gameModeFinalScores', {});
+      let newGameModeScores = newProgress.get('gameModeFinalScores', {});
+      let oldNpcProgress =
+        oldProgress.get('completedNpcQuestionsByLevel', {});
+      let newNpcProgress =
+        newProgress.get('completedNpcQuestionsByLevel', {});
       return oldProgress is map
         && newProgress is map
+        && oldGameModeScores is map
+        && newGameModeScores is map
+        && newGameModeScores.diff(oldGameModeScores).changedKeys().size() == 0
+        && newGameModeScores.diff(oldGameModeScores).addedKeys().size() == 0
+        && newGameModeScores.diff(oldGameModeScores).removedKeys().size() == 0
+        && newProgress.get('latestCompletedGameModeLevel', null)
+          == oldProgress.get('latestCompletedGameModeLevel', null)
+        && oldNpcProgress is map
+        && newNpcProgress is map
+        && newNpcProgress.diff(oldNpcProgress).changedKeys().size() == 0
+        && newNpcProgress.diff(oldNpcProgress).addedKeys().size() == 0
+        && newNpcProgress.diff(oldNpcProgress).removedKeys().size() == 0
+        && newProgress.get('completedNpcQuestions', [])
+          == oldProgress.get('completedNpcQuestions', [])
+        && newProgress.get('latestCompletedNpcQuestionLevel', null)
+          == oldProgress.get('latestCompletedNpcQuestionLevel', null)
         && oldQuestionAnswers is map
         && newQuestionAnswers is map
         && newQuestionAnswers.keys().hasAll(oldQuestionAnswers.keys())

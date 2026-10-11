@@ -26,6 +26,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
   String _userLRN = '';
   String _userAddress = '';
   String _userRole = '';
+  String _userCharacter = 'boy';
   Uint8List? _profilePhoto;
   Uint8List? _pendingProfilePhoto;
   bool _isEditing = false;
@@ -57,6 +58,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
         _userRole = profile['role'] ?? '';
         _userLRN = profile['lrn'] ?? '';
         _userAddress = profile['address'] ?? '';
+        _userCharacter = profile['character'] == 'girl' ? 'girl' : 'boy';
 
         _nameController.text = _userName;
         _addressController.text = _userAddress;
@@ -349,14 +351,44 @@ class _ProfileScreenState extends State<ProfileScreen> {
                                   : null,
                           child: _pendingProfilePhoto == null &&
                                   _profilePhoto == null
-                              ? Text(
-                                  _userName.isEmpty
-                                      ? 'S'
-                                      : _userName[0].toUpperCase(),
-                                  style: const TextStyle(
-                                    color: Colors.white,
-                                    fontSize: 32,
-                                    fontWeight: FontWeight.bold,
+                              ? ClipOval(
+                                  child: Center(
+                                    child: SizedBox(
+                                      width: 50,
+                                      height: 100,
+                                      child: ClipRect(
+                                        child: OverflowBox(
+                                          alignment: Alignment.topLeft,
+                                          minWidth: 0,
+                                          maxWidth: 300,
+                                          minHeight: 0,
+                                          maxHeight: 400,
+                                          child: Image.asset(
+                                            _userCharacter == 'girl'
+                                                ? 'assets/images/player/character2.png'
+                                                : 'assets/images/player/character.png',
+                                            width: 300,
+                                            height: 400,
+                                            fit: BoxFit.fill,
+                                            errorBuilder: (
+                                              context,
+                                              error,
+                                              stackTrace,
+                                            ) =>
+                                                Text(
+                                              _userName.isEmpty
+                                                  ? 'S'
+                                                  : _userName[0].toUpperCase(),
+                                              style: const TextStyle(
+                                                color: Colors.white,
+                                                fontSize: 32,
+                                                fontWeight: FontWeight.bold,
+                                              ),
+                                            ),
+                                          ),
+                                        ),
+                                      ),
+                                    ),
                                   ),
                                 )
                               : null,

@@ -15,6 +15,7 @@ class UserProgress {
   final int questAttempts;
   final Map<int, int> maxUnlockedSubLevel;
   final Map<int, LevelQuestionAnswer> levelQuestionAnswers;
+  final Map<int, int> gameModeFinalScores;
 
   UserProgress({
     required this.completedLevels,
@@ -24,6 +25,7 @@ class UserProgress {
     required this.questAttempts,
     required this.maxUnlockedSubLevel,
     this.levelQuestionAnswers = const {},
+    this.gameModeFinalScores = const {},
   });
 
   int get completedCount => completedLevels.length;
@@ -203,6 +205,8 @@ class UserProgressService {
         progress['maxUnlockedSubLevel'] as Map<String, dynamic>? ?? {};
     final rawLevelQuestionAnswers =
         progress['levelQuestionAnswers'] as Map<String, dynamic>? ?? {};
+    final rawGameModeFinalScores =
+        progress['gameModeFinalScores'] as Map<String, dynamic>? ?? {};
     return UserProgress(
       completedLevels: completed,
       completedNpcQuestions: completedNpcQuestions,
@@ -218,6 +222,14 @@ class UserProgressService {
         for (final entry in rawLevelQuestionAnswers.entries)
           if (int.tryParse(entry.key) case final int level when level >= 1 && level <= 60)
             level: LevelQuestionAnswer.fromData(entry.value),
+      },
+      gameModeFinalScores: {
+        for (final entry in rawGameModeFinalScores.entries)
+          if (int.tryParse(entry.key) case final int level when level >= 1 && level <= 60)
+            if (entry.value is int &&
+                entry.value >= 0 &&
+                entry.value <= 70)
+              level: entry.value as int,
       },
     );
   }
@@ -324,6 +336,7 @@ class UserProgressService {
                 ),
                 level.toString(): answer.toData(),
               },
+              'latestLevelQuestionAnswerLevel': level.toString(),
             },
           };
           debugPrint(
@@ -361,31 +374,72 @@ class UserProgressService {
     }
   }
 
-  static Future<void> saveGameModeFinalScore(int level, int score) async {
-    if (level < 1 || level > 60) {
-      throw ArgumentError.value(level, 'level');
-    }
-    if (score < 0) throw ArgumentError.value(score, 'score');
-
-    final uid = _uid();
-    final preferences = await SharedPreferences.getInstance();
-    final saved = await preferences.setInt(
-      '$_gameModeFinalScoreKeyPrefix${uid}_$level',
-      score,
-    );
-    if (!saved) {
-      throw StateError('Could not persist the Game Mode final score.');
-    }
-  }
-
   static Future<int?> getGameModeFinalScore(int level, {String? uid}) async {
     if (level < 1 || level > 60) {
       throw ArgumentError.value(level, 'level');
     }
+    final savedScore = (await getProgressForUid(_uid(uid)))
+        .gameModeFinalScores[level];
+    if (savedScore != null) return savedScore;
+
     final preferences = await SharedPreferences.getInstance();
     return preferences.getInt(
       '$_gameModeFinalScoreKeyPrefix${_uid(uid)}_$level',
     );
+  }
+
+  static Future<void> completeGameMode(int level, int score) async {
+    if (level < 1 || level > 60) {
+      throw ArgumentError.value(level, 'level');
+    }
+    if (score < 0 || score > 70) {
+      throw ArgumentError.value(score, 'score');
+    }
+
+    final userRef = _users.doc(_uid());
+    await FirebaseFirestore.instance.runTransaction<void>((transaction) async {
+      final snapshot = await transaction.get(userRef);
+      if (!snapshot.exists) {
+        throw StateError('User profile not found.');
+      }
+
+      final progress = _fromData(snapshot.data());
+      final existingScore = progress.gameModeFinalScores[level];
+      if (existingScore != null) {
+        if (existingScore != score) {
+          throw StateError('A completed Game Mode score cannot be changed.');
+        }
+        return;
+      }
+
+      final completed = {...progress.completedLevels, level}.toList()..sort();
+      final mainLevel = ((level - 1) ~/ 20) + 1;
+      final displayNumber = level % 20 == 0 ? 20 : level % 20;
+      final nextSubLevel = displayNumber + 1;
+      final sublevels = {...progress.maxUnlockedSubLevel};
+      if (nextSubLevel <= 20 && nextSubLevel > (sublevels[mainLevel] ?? 1)) {
+        sublevels[mainLevel] = nextSubLevel;
+      }
+      final unlockedLevels = displayNumber == 20 && mainLevel < 3
+          ? max(progress.unlockedLevels, mainLevel + 1)
+          : progress.unlockedLevels;
+      transaction.update(userRef, {
+        'progress.completedLevels': completed,
+        'progress.unlockedLevels': unlockedLevels,
+        'progress.maxUnlockedSubLevel': {
+          '1': sublevels[1] ?? 1,
+          '2': sublevels[2] ?? 1,
+          '3': sublevels[3] ?? 1,
+        },
+        'progress.gameModeFinalScores': {
+          for (final entry in progress.gameModeFinalScores.entries)
+            entry.key.toString(): entry.value,
+          level.toString(): score,
+        },
+        'progress.latestCompletedGameModeLevel': level.toString(),
+      });
+    });
+    _invalidateCurrentProgressCache();
   }
 
   static Future<void> saveLevelCompletion(int level, {String? email}) async {
@@ -457,6 +511,7 @@ class UserProgressService {
       };
       final updatedProgress = <String, dynamic>{
         'completedNpcQuestionsByLevel': completedByLevel,
+        'latestCompletedNpcQuestionLevel': level.toString(),
       };
       if (level == 1) {
         updatedProgress['completedNpcQuestions'] = completed;
@@ -485,6 +540,12 @@ class UserProgressService {
     await FirebaseFirestore.instance.runTransaction<void>((transaction) async {
       final snapshot = await transaction.get(userRef);
       if (!snapshot.exists) return;
+
+      final progress = _fromData(snapshot.data());
+      if (!progress.completedNpcQuestionsByLevel.containsKey(level) &&
+          (level != 1 || progress.completedNpcQuestions.isEmpty)) {
+        return;
+      }
 
       final updates = <String, dynamic>{
         'progress.completedNpcQuestionsByLevel.$level': FieldValue.delete(),

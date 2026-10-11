@@ -90,6 +90,7 @@ class ProfileService {
               ? null
               : prefs.getString(_keyForUser(_addressKey, uid))) ??
           '',
+      'character': account?.character == 'girl' ? 'girl' : 'boy',
       'profilePhotoUrl': account?.profilePhotoUrl ?? '',
     };
   }
